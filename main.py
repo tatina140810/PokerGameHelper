@@ -2,7 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
-from bot.handlers import start_command, handle_callback
+from bot.handlers import start_command, help_command, handle_callback
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +22,7 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(token).build()
     
     application.add_handler(CommandHandler('start', start_command))
+    application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     print("Bot is running...")

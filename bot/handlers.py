@@ -3,18 +3,21 @@ from telegram.ext import ContextTypes
 from poker.card import Card
 from poker.montecarlo import MonteCarloSimulation
 from .keyboards import get_suit_keyboard, get_rank_keyboard
+from poker.analysis import HandAnalyzer
 import time
 
-# Initialize Simulation Engine
+# Initialize Simulation Engine and Analyzer
 simulation = MonteCarloSimulation()
+analyzer = HandAnalyzer()
 
 async def format_game_state(user_data):
     """Formats the current game state into a message string."""
     hero = user_data.get('hero', [])
     board = user_data.get('board', [])
     probs = user_data.get('probs', None)
+    analysis_text = user_data.get('analysis_text', "")
     
-    hero_str = " ".join([str(c) for c in hero]) if hero else "Select 2 cards"
+    hero_str = " ".join([str(c) for c in hero]) if hero else "Выберите 2 карты"
     
     board_str = ""
     if board:
@@ -25,26 +28,39 @@ async def format_game_state(user_data):
         if len(board) == 5:
             board_str += " " + str(board[4]) # River
     else:
-        board_str = "Waiting..."
+        board_str = "Ожидание..."
 
     msg = (
-        f"<b>🃏 Poker Game Helper</b>\n\n"
-        f"<b>👤 Hero Hand:</b> {hero_str}\n"
-        f"<b>🎴 Board:</b> {board_str}\n\n"
+        f"<b>🃏 Помощник для Покера</b>\n\n"
+        f"<b>👤 Рука Героя:</b> {hero_str}\n"
+        f"<b>🎴 Борд:</b> {board_str}\n\n"
     )
     
     if probs:
         msg += (
-            f"<b>📊 Probabilities (vs 1 Random Opponent):</b>\n"
-            f"🏆 Win: <code>{probs['win']:.1f}%</code>\n"
-            f"🤝 Tie: <code>{probs['tie']:.1f}%</code>\n"
-            f"💀 Lose: <code>{probs['lose']:.1f}%</code>\n"
-            f"📈 Equity: <code>{probs['equity']:.1f}%</code>\n\n"
+            f"<b>📊 Вероятности (против 1 случайного оппонента):</b>\n"
+            f"🏆 Победа: <code>{probs['win']:.1f}%</code>\n"
+            f"🤝 Ничья: <code>{probs['tie']:.1f}%</code>\n"
+            f"💀 Поражение: <code>{probs['lose']:.1f}%</code>\n"
+            f"📈 Эквити (Equity): <code>{probs['equity']:.1f}%</code>\n\n"
         )
+
+    if analysis_text:
+        msg += analysis_text + "\n"
     
     stage = get_current_stage(user_data)
-    msg += f"<i>Current Step: Select {stage}</i>\n\n"
-    msg += "⚠️ <b>Disclaimer:</b> This tool is for educational purposes only. It does not connect to any poker platform and does not provide real-time assistance."
+    # Translate stage names
+    stage_map = {
+        "Hero Card 1": "Карту Героя 1",
+        "Hero Card 2": "Карту Героя 2",
+        "Flop Card": "Карту Флопа",
+        "Turn Card": "Карту Терна",
+        "River Card": "Карту Ривера",
+        "Result (Game Over)": "Результат (Конец игры)"
+    }
+    stage_ru = stage_map.get(stage, stage)
+    
+    msg += f"<i>Текущий шаг: Выберите {stage_ru}</i>\n"
     
     return msg
 
@@ -84,9 +100,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['hero'] = []
     context.user_data['board'] = []
     context.user_data['used_cards'] = [] # Strings like 'As'
-    context.user_data['probs'] = null = None
+    context.user_data['probs'] = None
+    context.user_data['analysis_text'] = ""
     
     await refresh_message(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a help message."""
+    msg = (
+        "<b>ℹ️ Справка по боту</b>\n\n"
+        "Этот бот помогает рассчитывать вероятности в Техасском Холдеме.\n\n"
+        "<b>Как пользоваться:</b>\n"
+        "1. Выберите 2 свои карты (Hero).\n"
+        "2. Выбирайте карты борда (Флоп, Терн, Ривер).\n"
+        "3. Бот автоматически рассчитает ваши шансы на победу против случайной руки.\n\n"
+        "<b>Функции:</b>\n"
+        "📊 <b>Вероятности</b>: Победа, Ничья, Поражение, Эквити.\n"
+        "⚠️ <b>Анализ силы</b>: Бот покажет, какие руки сильнее вашей на текущем борде.\n"
+        "🔄 <b>Управление</b>: Кнопки ОТМЕНА (удалить последнюю карту) и СБРОС (начать заново).\n\n"
+        "<b>Команды:</b>\n"
+        "/start - Начать новую игру\n"
+        "/help - Показать это сообщение"
+    )
+    await update.message.reply_text(msg, parse_mode='HTML')
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Main state machine handler."""
@@ -165,15 +201,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # It implies we add cards one by one. I will just append to board.
             board.append(new_card)
         else:
-            await query.answer("All cards selected!", show_alert=True)
+            await query.answer("Все карты выбраны!", show_alert=True)
             return
 
         user_data['used_cards'].append(str(new_card))
         
         # Trigger Simulation if stage complete
         # Stages: Hero(2), Flop(3 cards on board), Turn(4 cards), River(5 cards)
-        if len(hero) == 2:
-            await query.edit_message_text("⏳ Calculating probabilities...", parse_mode='HTML')
+        # Optimization: Only calculate when a stage is fully complete (0, 3, 4, 5 board cards)
+        if len(hero) == 2 and len(board) in [0, 3, 4, 5]:
+            await query.edit_message_text("⏳ Расчет вероятностей...", parse_mode='HTML')
             await run_simulation(user_data)
             
         await refresh_message(update, context)
@@ -188,7 +225,16 @@ async def run_simulation(user_data):
         return
 
     # Run Monte Carlo
-    # This might block the event loop for 1-2s. For now, we run synchronous.
-    # In production, run in run_in_executor.
-    probs = simulation.run(hero, board, num_opponents=1, iterations=50000) # User requested 50k
+    # Reduced iterations to prevent timeout/freeze (15k ~ 0.7s)
+    probs = simulation.run(hero, board, num_opponents=1, iterations=15000)
     user_data['probs'] = probs
+
+    # Run Stronger Hand Analysis
+    stronger_hands = analyzer.analyze_stronger_hands(hero, board)
+    formatted = analyzer.format_analysis(stronger_hands)
+    
+    # If board is present but no stronger hands found -> Hero has Nuts
+    if not formatted and len(board) >= 3:
+         formatted = "\n<b>💪 У вас сильнейшая рука! (Nuts)</b>\n"
+         
+    user_data['analysis_text'] = formatted

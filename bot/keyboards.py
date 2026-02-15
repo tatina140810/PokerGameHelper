@@ -7,7 +7,7 @@ def get_suit_keyboard():
         [
             InlineKeyboardButton(suit, callback_data=f"suit:{suit}") for suit in SUITS
         ],
-        [InlineKeyboardButton("UNDO", callback_data="action:undo"), InlineKeyboardButton("RESET", callback_data="action:reset")]
+        [InlineKeyboardButton("ОТМЕНА", callback_data="action:undo"), InlineKeyboardButton("СБРОС", callback_data="action:reset")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -36,5 +36,5 @@ def get_rank_keyboard(suit: str, used_cards: list):
     if row:
         keyboard.append(row)
         
-    keyboard.append([InlineKeyboardButton("🔙 Back to Suits", callback_data="action:back_to_suits")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад к мастям", callback_data="action:back_to_suits")])
     return InlineKeyboardMarkup(keyboard)
